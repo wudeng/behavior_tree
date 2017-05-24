@@ -41,7 +41,7 @@ tick(#bt{root = Root}, Target) ->
         end,
         LastOpenNodes
     ),
-    put(open_nodes, LastOpenNodes),
+    put(open_nodes, CurOpenNodes),
     ok.
 
 execute(#node{id = Id} = Node, Tick) ->
