@@ -26,27 +26,37 @@
     param = []
 }).
 
--record(tick, {target = 0, open_nodes = []}).
+-record(tick, {
+    target = 0, 
+    blackboard = dict:new(),
+    open_nodes = []
+}).
 
-tick(#bt{root = Root}, Target) ->
-    {_Status, #tick{
-        open_nodes = CurOpenNodes 
-    }} = execute(Root, #tick{target = Target, open_nodes = []}),
-    LastOpenNodes = get_key(open_nodes, []),
-    lists:foreach(
-        fun(Id) ->
-            not lists:member(Id, CurOpenNodes) andalso 
-            get_key({is_open, Id}, false) andalso
-            put({is_open, Id}, false)
+tick(#bt{root = Root}, Tick) ->
+    {_Status, NewTick} = execute(Root, Tick),
+    #tick{
+        open_nodes = CurOpenNodes,
+        blackboard = Blackboard
+    } = NewTick,
+    LastOpenNodes = get_key(open_nodes, Blackboard, []),
+    NewBlackboard = lists:foldl(
+        fun(Id, Acc) ->
+            case not lists:member(Id, CurOpenNodes) andalso get_key({is_open, Id}, Acc, false) of
+                true -> dict:store({is_open, Id}, false, Acc);
+                false -> Acc
+            end
         end,
+        Blackboard,
         LastOpenNodes
     ),
-    put(open_nodes, CurOpenNodes),
-    ok.
+    NewTick#tick{
+        open_nodes = [],
+        blackboard = dict:store(open_nodes, CurOpenNodes, NewBlackboard)
+    }.
 
-execute(#node{id = Id} = Node, Tick) ->
+execute(#node{id = Id} = Node, #tick{blackboard = Blackboard} = Tick) ->
     Tick1 = enter_cb(Node, Tick),
-    Tick2 = case get_key({is_open, Id}, false) of 
+    Tick2 = case get_key({is_open, Id}, Blackboard, false) of 
         false -> open_cb(Node, Tick1);
         true -> Tick1
     end,
@@ -62,34 +72,34 @@ execute(#node{id = Id} = Node, Tick) ->
 enter_cb(#node{id = Id}, #tick{open_nodes = OpenNodes} = Tick) ->
     Tick#tick{open_nodes = [Id|OpenNodes]}.
 
-open_cb(#node{id = Id} = Node, Tick) ->
-    set_key({is_open, Id}, true),
-    open_cb_(Node, Tick).
+open_cb(#node{id = Id} = Node, #tick{blackboard = Blackboard} = Tick) ->
+    NewBlackboard = dict:store({is_open, Id}, true, Blackboard),
+    open_cb_(Node, Tick#tick{blackboard = NewBlackboard}).
 
-open_cb_(#node{id = Id, name = wait}, Tick) ->
-    set_key({start_time, Id}, now_seconds()),
-    Tick;
-open_cb_(#node{id = Id, name = mem_priority}, Tick) ->
-    set_key({running_index, Id}, 1),
-    Tick;
-open_cb_(#node{id = Id, name = mem_sequence}, Tick) ->
-    set_key({running_index, Id}, 1),
-    Tick;
+open_cb_(#node{id = Id, name = wait}, #tick{blackboard = Blackboard} = Tick) ->
+    NewBlackboard = dict:store({start_time, Id}, now_seconds(), Blackboard),
+    Tick#tick{blackboard = NewBlackboard};
+open_cb_(#node{id = Id, name = mem_priority}, #tick{blackboard = Blackboard} = Tick) ->
+    NewBlackboard = dict:store({running_index, Id}, 1, Blackboard),
+    Tick#tick{blackboard = NewBlackboard};
+open_cb_(#node{id = Id, name = mem_sequence}, #tick{blackboard = Blackboard} = Tick) ->
+    NewBlackboard = dict:store({running_index, Id}, 1, Blackboard),
+    Tick#tick{blackboard = NewBlackboard};
 open_cb_(_, Tick) ->
     Tick.
 
 
 
 %% composite
-tick_cb(#node{id = Id, name = mem_priority, children = Children}, Tick) ->
-    RuningIdx = get_key({running_index, Id}, 1),
+tick_cb(#node{id = Id, name = mem_priority, children = Children}, #tick{blackboard = Blackboard} = Tick) ->
+    RuningIdx = get_key({running_index, Id}, Blackboard, 1),
     ChildrenToRun = lists:filter(
         fun({Idx, _Node}) -> Idx >= RuningIdx end,
         lists:zip(lists:seq(1, length(Children)), Children)
     ),
     mem_priority(Id, ChildrenToRun, Tick);
-tick_cb(#node{id = Id, name = mem_sequence, children = Children}, Tick) ->
-    RuningIdx = get_key({running_index, Id}, 1),
+tick_cb(#node{id = Id, name = mem_sequence, children = Children}, #tick{blackboard = Blackboard} = Tick) ->
+    RuningIdx = get_key({running_index, Id}, Blackboard, 1),
     ChildrenToRun = lists:filter(
         fun({Idx, _Node}) -> Idx >= RuningIdx end,
         lists:zip(lists:seq(1, length(Children)), Children)
@@ -110,8 +120,8 @@ tick_cb(#node{name = invertor, child = Child}, Tick) ->
     end;
 
 %% action
-tick_cb(#node{id = Id, name = wait, param = [Seconds]}, Tick) ->
-    StartTime = get_key({start_time, Id}, 0),
+tick_cb(#node{id = Id, name = wait, param = [Seconds]}, #tick{blackboard = Blackboard} = Tick) ->
+    StartTime = get_key({start_time, Id}, Blackboard, 0),
     Now = now_seconds(),
     Status = if 
         Now - StartTime >= Seconds -> true;
@@ -129,42 +139,39 @@ tick_cb(#node{name = runner}, Tick) ->
     io:format("runner ticking~n"),
     {running, Tick}.
 
-close_cb(#node{id = Id}, #tick{open_nodes = [_|L]} = Tick) ->
-    set_key({is_open, Id}, false),
-    Tick#tick{open_nodes = L}.
+close_cb(#node{id = Id}, #tick{open_nodes = [_|L], blackboard = Blackboard} = Tick) ->
+    NewBlackboard = dict:store({is_open, Id}, false, Blackboard),
+    Tick#tick{open_nodes = L, blackboard = NewBlackboard}.
 
 exit_cb(_Node, Tick) ->
     Tick.
 
-get_key(Key, Default) ->
-    case get(Key) of
-        undefined -> Default;
-        Value -> Value
+get_key(Key, Blackboard, Default) ->
+    case dict:find(Key, Blackboard) of
+        {ok, Value} -> Value;
+        error -> Default
     end.
-
-set_key(Key, Value) ->
-    put(Key, Value).
 
 mem_priority(_Id, [], Tick) ->
     {false, Tick};
-mem_priority(Id, [{I, C}|Children], Tick) ->
+mem_priority(Id, [{I, C}|Children], #tick{blackboard = Blackboard} = Tick) ->
     case execute(C, Tick) of
         {true, NewTick} -> 
             {true, NewTick};
         {running, NewTick} ->
-            set_key({running_index, Id}, I),
-            {running, NewTick};
+            NewBlackboard = dict:store({running_index, Id}, I, Blackboard),
+            {running, NewTick#tick{blackboard = NewBlackboard}};
         {false, NewTick} ->
             mem_priority(Id, Children, NewTick)
     end.
 
 mem_sequence(_Id, [], Tick) ->
     {true, Tick};
-mem_sequence(Id, [{I, C}|Children], Tick) ->
+mem_sequence(Id, [{I, C}|Children], #tick{blackboard = Blackboard} = Tick) ->
     case execute(C, Tick) of
         {running, NewTick} ->
-            set_key({running_index, Id}, I),
-            {running, NewTick};
+            NewBlackboard = dict:store({running_index, Id}, I, Blackboard),
+            {running, NewTick#tick{blackboard = NewBlackboard}};
         {false, NewTick} -> 
             {false, NewTick};
         {true, NewTick} ->
@@ -211,12 +218,13 @@ test1() -> test(bt1()).
 test2() -> test(bt2()).
 
 test(BT) ->
-    Target = 1,
-    lists:foreach(
-        fun(_) ->
-            tick(BT, Target),
-            timer:sleep(1000)
+    lists:foldl(
+        fun(_, Tick) ->
+            NewTick = tick(BT, Tick),
+            timer:sleep(1000),
+            NewTick
         end,
+        #tick{},
         lists:seq(1, 12)
     ).
 
