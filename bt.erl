@@ -154,11 +154,11 @@ get_key(Key, Blackboard, Default) ->
 
 mem_priority(_Id, [], Tick) ->
     {false, Tick};
-mem_priority(Id, [{I, C}|Children], #tick{blackboard = Blackboard} = Tick) ->
+mem_priority(Id, [{I, C}|Children], Tick) ->
     case execute(C, Tick) of
         {true, NewTick} -> 
             {true, NewTick};
-        {running, NewTick} ->
+        {running, #tick{blackboard = Blackboard} = NewTick} ->
             NewBlackboard = dict:store({running_index, Id}, I, Blackboard),
             {running, NewTick#tick{blackboard = NewBlackboard}};
         {false, NewTick} ->
@@ -167,9 +167,9 @@ mem_priority(Id, [{I, C}|Children], #tick{blackboard = Blackboard} = Tick) ->
 
 mem_sequence(_Id, [], Tick) ->
     {true, Tick};
-mem_sequence(Id, [{I, C}|Children], #tick{blackboard = Blackboard} = Tick) ->
+mem_sequence(Id, [{I, C}|Children], Tick) ->
     case execute(C, Tick) of
-        {running, NewTick} ->
+        {running, #tick{blackboard = Blackboard} = NewTick} ->
             NewBlackboard = dict:store({running_index, Id}, I, Blackboard),
             {running, NewTick#tick{blackboard = NewBlackboard}};
         {false, NewTick} -> 
