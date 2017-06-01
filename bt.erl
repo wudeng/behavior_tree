@@ -39,20 +39,43 @@ tick(#bt{root = Root}, Tick) ->
         blackboard = Blackboard
     } = NewTick,
     LastOpenNodes = get_key(open_nodes, Blackboard, []),
-    NewBlackboard = lists:foldl(
-        fun(Id, Acc) ->
-            case not lists:member(Id, CurOpenNodes) andalso get_key({is_open, Id}, Acc, false) of
-                true -> dict:store({is_open, Id}, false, Acc);
-                false -> Acc
-            end
-        end,
-        Blackboard,
-        LastOpenNodes
-    ),
-    NewTick#tick{
+    Tick1 = #tick{
+        blackboard = NewBlackboard
+    } = close_nodes(Root, CurOpenNodes, LastOpenNodes, NewTick),
+    Tick1#tick{
         open_nodes = [],
         blackboard = dict:store(open_nodes, CurOpenNodes, NewBlackboard)
     }.
+
+close_nodes(_, _, [], Tick) -> Tick;
+close_nodes(undefined, _, _, Tick) -> Tick;
+close_nodes(#node{children = [], child = undefined} = Node, CurOpenNodes, LastOpenNodes, Tick) ->
+    close_node(Node, CurOpenNodes, LastOpenNodes, Tick);
+close_nodes(#node{children = Children, child = undefined} = Node, CurOpenNodes, LastOpenNodes, Tick) ->
+    NewTick = close_node(Node, CurOpenNodes, LastOpenNodes, Tick),
+    lists:foldl(
+        fun(Child, Acc) ->
+            close_nodes(Child, CurOpenNodes, LastOpenNodes, Acc)
+        end,
+        NewTick,
+        Children
+    );
+close_nodes(#node{children = [], child = Child} = Node, CurOpenNodes, LastOpenNodes, Tick) ->
+    NewTick = close_node(Node, CurOpenNodes, LastOpenNodes, Tick),
+    close_nodes(Child, CurOpenNodes, LastOpenNodes, NewTick).
+
+
+close_node(#node{id = Id} = Node, CurOpenNodes, LastOpenNodes, #tick{blackboard = Blackboard} = Tick) ->
+    case lists:member(Id, LastOpenNodes) andalso 
+         not lists:member(Id, CurOpenNodes) andalso 
+         get_key({is_open, Id}, Blackboard, false) of
+        true -> 
+            io:format("close_node ~p", [Node]),
+            NewTick = close_cb_(Node, Tick),
+            NewTick#tick{blackboard = dict:store({is_open, Id}, false, Blackboard)};
+        false -> 
+            Tick
+    end.
 
 execute(#node{id = Id} = Node, #tick{blackboard = Blackboard} = Tick) ->
     Tick1 = enter_cb(Node, Tick),
@@ -139,9 +162,12 @@ tick_cb(#node{name = runner}, Tick) ->
     io:format("runner ticking~n"),
     {running, Tick}.
 
-close_cb(#node{id = Id}, #tick{open_nodes = [_|L], blackboard = Blackboard} = Tick) ->
+close_cb(#node{id = Id} = Node, #tick{open_nodes = [_|L], blackboard = Blackboard} = Tick) ->
     NewBlackboard = dict:store({is_open, Id}, false, Blackboard),
-    Tick#tick{open_nodes = L, blackboard = NewBlackboard}.
+    close_cb_(Node, Tick#tick{open_nodes = L, blackboard = NewBlackboard}).
+
+close_cb_(_Node, Tick) ->
+    Tick.
 
 exit_cb(_Node, Tick) ->
     Tick.
