@@ -71,8 +71,7 @@ close_node(#node{id = Id} = Node, CurOpenNodes, LastOpenNodes, #tick{blackboard 
          get_key({is_open, Id}, Blackboard, false) of
         true -> 
             io:format("close_node ~p", [Node]),
-            NewTick = close_cb_(Node, Tick),
-            NewTick#tick{blackboard = dict:store({is_open, Id}, false, Blackboard)};
+            close_cb_(Node, Tick#tick{blackboard = dict:store({is_open, Id}, false, Blackboard)});
         false -> 
             Tick
     end.
