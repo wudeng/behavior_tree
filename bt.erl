@@ -15,7 +15,7 @@
 
 -type composite() :: mem_priority | mem_sequence | priority | sequence.
 -type action() :: succeeder | failer | wait.
--type decorator() :: invertor.
+-type decorator() :: invertor | repeat_until_failure.
 -type condition() :: atom().
 
 -record(node, {
@@ -140,6 +140,16 @@ tick_cb(#node{name = invertor, child = Child}, Tick) ->
         true -> {false, NewTick};
         false -> {true, NewTick}
     end;
+
+tick_cb(#node{name = repeat_until_failure, child = Child}, Tick) ->
+    {Status, NewTick} = execute(Child, Tick),
+    case Status of
+        running -> {running, NewTick};
+        true -> {running, NewTick};
+        false -> 
+            {true, NewTick}
+    end;
+
 
 %% action
 tick_cb(#node{id = Id, name = wait, param = [Seconds]}, #tick{blackboard = Blackboard} = Tick) ->
